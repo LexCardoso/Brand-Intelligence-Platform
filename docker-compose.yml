@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  # Mensageria - Kafka (usando Redpanda que é mais leve)
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: redpanda
+    command:
+      - redpanda start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --smp 1
+      - --memory 1G
+      - --overprovisioned
+    ports:
+      - "18082:18082"
+      - "19092:19092"
+      - "19644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    networks:
+      - brand-intel-net
+
+  # Console do Redpanda (UI para Kafka)
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: redpanda-console
+    depends_on:
+      - redpanda
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:9092
+    networks:
+      - brand-intel-net
+
+  # Storage - MinIO (S3 local)
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - brand-intel-net
+
+  # LLM Local - Ollama
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - brand-intel-net
+
+  # Database Analytics - DuckDB (via PostgreSQL wire protocol)
+  duckdb:
+    image: marcboeker/go-duckdb-postgres-server:latest
+    container_name: duckdb
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=brand_intel
+      - POSTGRES_USER=analytics
+      - POSTGRES_PASSWORD=analytics123
+    volumes:
+      - duckdb-data:/data
+    networks:
+      - brand-intel-net
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - brand-intel-net
+
+  # Visualization - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - brand-intel-net
+
+volumes:
+  redpanda-data:
+  minio-data:
+  ollama-data:
+  duckdb-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  brand-intel-net:
+    driver: bridge
